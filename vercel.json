@@ -1,0 +1,9 @@
+{
+  "redirects": [
+    { "source": "/api/chat/", "destination": "/api/chat", "permanent": false }
+  ],
+  "routes": [
+    { "handle": "filesystem" },
+    { "src": "/(.*)", "dest": "/index.html" }
+  ]
+}
