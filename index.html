@@ -338,15 +338,22 @@
     }
 
     function getEndpointCandidates() {
-      // GitHub Pages is static hosting: it can't serve /api/chat.
-      // So we try the Vercel backend first there, then current origin.
-      const isGithubPages = /(^|\.)github\.io$/i.test(window.location.hostname);
-      const here = apiUrlForOrigin(window.location.origin);
-      const fallback = FALLBACK_API_ORIGIN ? apiUrlForOrigin(FALLBACK_API_ORIGIN) : '';
-      const list = isGithubPages ? [fallback, here] : [here, fallback];
+      const isStaticHosting =
+        /(^|\.)github\.io$/i.test(window.location.hostname) ||
+        /\/AI-photonn\.kg(\/|$)/i.test(window.location.pathname);
 
-      // Unique + non-empty
-      return Array.from(new Set(list.filter(Boolean)));
+      const fallback = FALLBACK_API_ORIGIN ? apiUrlForOrigin(FALLBACK_API_ORIGIN) : '';
+      const here = apiUrlForOrigin(window.location.origin);
+
+      // Static hosting (e.g., GitHub Pages) can't serve /api/chat at the same origin.
+      // So on such hosts we ONLY try the external backend (fallback).
+      const list = isStaticHosting ? [fallback] : [here, fallback];
+
+      // Unique + non-empty + force absolute
+      return Array.from(new Set(list.filter(u => typeof u === 'string' && u.trim())))
+        .map(u => {
+          try { return new URL(u, window.location.origin).toString(); } catch { return u; }
+        });
     }
 
     async function checkApiAvailable() {
@@ -1220,7 +1227,17 @@
       const endpoints = getEndpointCandidates();
       let lastErr = null;
 
-      for (const url of endpoints) {
+      for (let url of endpoints) {
+        // Enforce absolute URL (avoid "./api/chat" and other relative paths)
+        if (!/^https?:\/\//i.test(url)) {
+          try { url = new URL(url, window.location.origin).toString(); } catch { continue; }
+        }
+
+        // Extra safety: never call /<repo>/api/chat on GitHub Pages
+        if (/github\.io\//i.test(url) && /\/api\/chat/i.test(url)) {
+          continue;
+        }
+
         try {
           const res = await fetch(url, {
             method: 'POST',
@@ -1260,8 +1277,8 @@
             }
 
             // Extra hint for common misroutes like /AI-photonn.kg/api/chat
-            if (/\/AI-photonn\.kg\//i.test(url)) {
-              msg += ' Похоже, запрос сформировался с неверным base path. API должен вызываться как /api/chat на корне домена.';
+            if (/\/AI-photonn\.kg\//i.test(url) || (/github\.io\//i.test(url) && /\/AI-photonn\.kg\//i.test(url))) {
+              msg += ' Похоже, сайт открыт в подпапке (например, GitHub Pages /AI-photonn.kg). На GitHub Pages /api/chat не работает. Нужен отдельный backend/API‑сервер (fallback).';
             }
 
             if (!msg) msg = `HTTP ${res.status} (empty error payload)`;
@@ -1529,9 +1546,10 @@
       if (!ok) {
         const isGithubPages = /(^|\.)github\.io$/i.test(window.location.hostname);
         const hint = isGithubPages
-          ? 'Похоже, сайт открыт на GitHub Pages (это статический хостинг). Он не поддерживает /api/chat. ' +
-            'Используйте Vercel-домен как backend (уже добавлен fallback) и убедитесь, что на Vercel существует /api/chat и задан OPENROUTER_API_KEY.'
-          : 'Проверьте деплой serverless‑функции /api/chat и переменную окружения OPENROUTER_API_KEY.';
+          ? 'Похоже, сайт открыт на GitHub Pages (это статический хостинг). Он не поддерживает /api/chat на этом домене. ' +
+            'Чтобы чат работал, нужен отдельный backend/API‑сервер. Сейчас выбран fallback: ' + (FALLBACK_API_ORIGIN || '(не задан)') + '. ' +
+            'Убедитесь, что на fallback-домене существует /api/chat и серверный ключ настроен.'
+          : 'Проверьте, что /api/chat задеплоен и серверный ключ настроен.';
 
         setStatus(
           'API не найден. ' + hint + ' ' +
