@@ -320,40 +320,33 @@
     // Настройка: в Vercel добавьте переменную окружения OPENROUTER_API_KEY со своим ключом.
     const MODEL = 'xiaomi/mimo-v2-flash:free';
 
-    // Try multiple endpoint variants (root + basePath + trailing slash)
-    // This fixes cases when the site is served from a subfolder or without a trailing slash.
-    function getBasePath() {
-      let p = String(location.pathname || '/');
-      if (!p) p = '/';
-      if (!p.startsWith('/')) p = '/' + p;
-      if (p.endsWith('/')) return p;
-      // If URL looks like a file (/path/index.html) => strip file
-      if (/\.[a-z0-9]+$/i.test(p)) return p.replace(/\/[^\/]*$/, '/');
-      // If URL is a folder without trailing slash (/app) => treat as folder
-      return p + '/';
+    // Endpoint for serverless API
+    // IMPORTANT: always call the root API path on the current origin.
+    // This avoids broken paths like "/AI-photonn.kg/api/chat" that can appear when the SPA is opened under a nested pathname.
+    const FALLBACK_API_ORIGIN = 'https://photonn-ai-kcrs0d9yz-kerbezoshs-projects.vercel.app';
+
+    function apiUrlForOrigin(origin) {
+      try {
+        return new URL('/api/chat', origin).toString();
+      } catch {
+        return '/api/chat';
+      }
     }
 
-    function normalizeEndpointPath(s) {
-      let v = String(s || '').trim();
-      if (!v) return '';
-      // Never allow './api/..' to leak into requests
-      if (v.startsWith('./')) v = v.slice(1);
-      if (!v.startsWith('/')) v = '/' + v;
-      // Collapse accidental double slashes (except protocol, which we don't use here)
-      v = v.replace(/\/\/+/g, '/');
-      return v;
+    function getApiUrl() {
+      return apiUrlForOrigin(window.location.origin);
     }
 
     function getEndpointCandidates() {
-      const basePath = getBasePath();
-      // Важно: не используем trailing slash для /api/chat/ — на некоторых деплоях он может попасть в SPA
-      // и дать HTTP 405 на POST. Держим только каноничные варианты.
-      const list = [
-        '/api/chat',
-        basePath + 'api/chat'
-      ];
-      const normalized = list.map(normalizeEndpointPath).filter(Boolean);
-      return Array.from(new Set(normalized));
+      // GitHub Pages is static hosting: it can't serve /api/chat.
+      // So we try the Vercel backend first there, then current origin.
+      const isGithubPages = /(^|\.)github\.io$/i.test(window.location.hostname);
+      const here = apiUrlForOrigin(window.location.origin);
+      const fallback = FALLBACK_API_ORIGIN ? apiUrlForOrigin(FALLBACK_API_ORIGIN) : '';
+      const list = isGithubPages ? [fallback, here] : [here, fallback];
+
+      // Unique + non-empty
+      return Array.from(new Set(list.filter(Boolean)));
     }
 
     async function checkApiAvailable() {
@@ -1244,7 +1237,12 @@
             data = rawText ? JSON.parse(rawText) : {};
           } catch {
             const snippet = String(rawText || '').trim();
-            data = { error: { message: snippet ? snippet.slice(0, 800) : '' } };
+            // If we got an HTML error page (common when /api/chat is not routed to the function)
+            if (/^<!doctype\s+html|^<html[\s>]/i.test(snippet)) {
+              data = { error: { message: `HTML error page returned. This usually means the request did NOT reach the /api/chat function. Path: ${url}` } };
+            } else {
+              data = { error: { message: snippet ? snippet.slice(0, 800) : '' } };
+            }
           }
 
           if (!res.ok) {
@@ -1258,7 +1256,12 @@
             } else if (res.status === 404) {
               msg = msg || 'HTTP 404: API endpoint не найден.';
               msg += ` Путь: ${url}`;
-              msg += ' Проверьте, что существует /api/chat (или <basePath>/api/chat, если сайт открыт в подпапке).';
+              msg += ' Проверьте, что существует /api/chat.';
+            }
+
+            // Extra hint for common misroutes like /AI-photonn.kg/api/chat
+            if (/\/AI-photonn\.kg\//i.test(url)) {
+              msg += ' Похоже, запрос сформировался с неверным base path. API должен вызываться как /api/chat на корне домена.';
             }
 
             if (!msg) msg = `HTTP ${res.status} (empty error payload)`;
@@ -1524,13 +1527,19 @@
       const candidates = getEndpointCandidates();
       const ok = await checkApiAvailable();
       if (!ok) {
+        const isGithubPages = /(^|\.)github\.io$/i.test(window.location.hostname);
+        const hint = isGithubPages
+          ? 'Похоже, сайт открыт на GitHub Pages (это статический хостинг). Он не поддерживает /api/chat. ' +
+            'Используйте Vercel-домен как backend (уже добавлен fallback) и убедитесь, что на Vercel существует /api/chat и задан OPENROUTER_API_KEY.'
+          : 'Проверьте деплой serverless‑функции /api/chat и переменную окружения OPENROUTER_API_KEY.';
+
         setStatus(
-          'API не найден. Проверьте деплой serverless‑функции /api/chat. ' +
-          'Откройте в браузере /api/chat — должно вернуть {"ok":true}. ' +
+          'API не найден. ' + hint + ' ' +
+          'Проверка: откройте /api/chat — должно вернуть {"ok":true}. ' +
           'Пробуемые пути: ' + candidates.join(', '),
           'error'
         );
-        setTimeout(() => setStatus(''), 11000);
+        setTimeout(() => setStatus(''), 12000);
       }
     })();
 
