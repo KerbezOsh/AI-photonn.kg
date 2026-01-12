@@ -4,6 +4,11 @@ module.exports = async (req, res) => {
     res.setHeader('Content-Type', 'application/json; charset=utf-8');
     res.setHeader('Cache-Control', 'no-store');
 
+    // CORS (allow using this API from GitHub Pages / other origins)
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'POST, GET, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+
     // Preflight (usually not needed for same-origin, but harmless)
     if (req.method === 'OPTIONS') {
       res.setHeader('Allow', 'POST, GET, OPTIONS');
